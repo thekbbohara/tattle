@@ -1,0 +1,76 @@
+name: Release
+
+# Push a tag like v0.1.0 to build binaries and attach them to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, name: x86_64-linux }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: aarch64-macos }
+          - { os: macos-latest, target: x86_64-apple-darwin, name: x86_64-macos }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo test --locked
+      - name: Build
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/tattle
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          name="tattle-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/tattle" README.md LICENSE "$name/"
+          tar czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: tattle-*.tar.gz*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Create the release, or add the missing binaries to it
+        # publish.sh may have created the release already (with a locally built
+        # Linux tarball and release notes). Then keep its assets and notes, and
+        # only upload binaries it does not have, merging their sums.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          repo="$GITHUB_REPOSITORY"
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            have=$(gh release view "$tag" --repo "$repo" --json assets -q '.assets[].name')
+            gh release download "$tag" --repo "$repo" -p SHA256SUMS -O SHA256SUMS 2>/dev/null || : > SHA256SUMS
+            for f in tattle-*.tar.gz; do
+              if printf '%s\n' "$have" | grep -qxF "$f"; then
+                echo "keep existing $f"
+                continue
+              fi
+              gh release upload "$tag" --repo "$repo" "$f"
+              cat "$f.sha256" >> SHA256SUMS
+            done
+            gh release upload "$tag" --repo "$repo" --clobber SHA256SUMS
+          else
+            cat *.sha256 > SHA256SUMS
+            gh release create "$tag" --repo "$repo" --title "Tattle $tag" \
+              --notes "Tattle $tag" tattle-*.tar.gz SHA256SUMS
+          fi

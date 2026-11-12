@@ -1,0 +1,24 @@
+[package]
+name = "tattle"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "A receipt of what your AI coding agents did to your machine: reads local Claude Code and Codex logs, ranks every risky command. Offline, read-only, secrets masked."
+license = "MIT"
+repository = "https://github.com/thekbbohara/tattle"
+homepage = "https://github.com/thekbbohara/tattle"
+readme = "README.md"
+keywords = ["claude-code", "codex", "security", "audit", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+include = ["src/**", "tests/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
+
+[dependencies]
+regex = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
